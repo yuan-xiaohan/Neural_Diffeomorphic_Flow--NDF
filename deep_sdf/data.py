@@ -19,10 +19,10 @@ def get_instance_filenames(data_source, split):
         for class_name in split[dataset]:
             for instance_name in split[dataset][class_name]:
                 instance_filename = os.path.join(
-                    dataset, class_name, instance_name + ".npz"
+                    dataset, "Processed", class_name, instance_name + ".npz"
                 )
                 if not os.path.isfile(
-                    os.path.join(data_source, ws.sdf_samples_subdir, instance_filename)
+                    os.path.join(data_source, instance_filename)
                 ):
                     # raise RuntimeError(
                     #     'Requested non-existent file "' + instance_filename + "'"
@@ -33,6 +33,16 @@ def get_instance_filenames(data_source, split):
                 npzfiles += [instance_filename]
     return npzfiles
 
+def get_sdf_samples_test(filename, subsample=None):
+    npz = np.load(filename)
+    t = npz["t"]
+    pos_tensor = torch.from_numpy(npz["pcd"])
+    if subsample is None:
+        sample = pos_tensor  # [subsample, 4]
+    else:
+        random_index = (torch.rand(subsample) * pos_tensor.shape[0]).long()
+        sample = torch.index_select(pos_tensor, 0, random_index).float()
+    return sample, t
 
 class NoMeshFileError(RuntimeError):
     """Raised when a mesh file is not found in a shape directory"""
@@ -178,7 +188,7 @@ class SDFSamples(torch.utils.data.Dataset):
         if load_ram:
             self.loaded_data = []
             for f in tqdm.tqdm(self.npyfiles, ascii=True):
-                filename = os.path.join(self.data_source, ws.sdf_samples_subdir, f)
+                filename = os.path.join(self.data_source, f)
                 npz = np.load(filename)
                 pos_tensor = remove_nans(torch.from_numpy(npz["pos"]))
                 neg_tensor = remove_nans(torch.from_numpy(npz["neg"]))
@@ -235,12 +245,18 @@ class SDFwSurfSamples(torch.utils.data.Dataset):
                 npz = np.load(filename)
                 pos_tensor = remove_nans(torch.from_numpy(npz["pos"]))
                 neg_tensor = remove_nans(torch.from_numpy(npz["neg"]))
-                surf_tensor = torch.from_numpy(npz["surface"])
+                # surf_tensor = torch.from_numpy(npz["surface"])
+                # self.loaded_data.append(
+                #     [
+                #         pos_tensor[torch.randperm(pos_tensor.shape[0])],
+                #         neg_tensor[torch.randperm(neg_tensor.shape[0])],
+                #         surf_tensor[torch.randperm(surf_tensor.shape[0])]
+                #     ]
+                # )
                 self.loaded_data.append(
                     [
                         pos_tensor[torch.randperm(pos_tensor.shape[0])],
-                        neg_tensor[torch.randperm(neg_tensor.shape[0])],
-                        surf_tensor[torch.randperm(surf_tensor.shape[0])]
+                        neg_tensor[torch.randperm(neg_tensor.shape[0])]
                     ]
                 )
 

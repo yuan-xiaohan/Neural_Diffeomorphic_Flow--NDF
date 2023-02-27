@@ -87,12 +87,12 @@ def main_function(experiment_directory, data_source, continue_from, batch_split)
     logging.info("running " + experiment_directory)
 
     # backup code
-    now = datetime.datetime.now()
-    code_bk_path = os.path.join(
-        experiment_directory, 'code_bk_%s.tar.gz' % now.strftime('%Y_%m_%d_%H_%M_%S'))
-    ws.create_code_snapshot('./', code_bk_path,
-                            extensions=('.py', '.json', '.cpp', '.cu', '.h', '.sh'),
-                            exclude=('examples', 'third-party', 'bin'))
+    # now = datetime.datetime.now()
+    # code_bk_path = os.path.join(
+    #     experiment_directory, 'code_bk_%s.tar.gz' % now.strftime('%Y_%m_%d_%H_%M_%S'))
+    # ws.create_code_snapshot('./', code_bk_path,
+    #                         extensions=('.py', '.json', '.cpp', '.cu', '.h', '.sh'),
+    #                         exclude=('examples', 'third-party', 'bin'))
 
     specs = ws.load_experiment_specifications(experiment_directory)
 
@@ -331,6 +331,10 @@ def main_function(experiment_directory, data_source, continue_from, batch_split)
 
         adjust_learning_rate(lr_schedules, optimizer_all, epoch)
 
+        epoch_loss = []
+        epoch_pw_loss = []
+        epoch_sdf_loss = []
+
         batch_num = len(sdf_loader)
         for bi, (sdf_data, indices) in enumerate(sdf_loader):
 
@@ -426,6 +430,9 @@ def main_function(experiment_directory, data_source, continue_from, batch_split)
                 loss_sdf=batch_loss_sdf, loss_pw=batch_loss_pw, loss_reg=batch_loss_reg,
                 loss_pp=batch_loss_pp, loss_=batch_loss)
 
+            epoch_loss.append(batch_loss)
+            epoch_sdf_loss.append(batch_loss_sdf)
+            epoch_pw_loss.append(batch_loss_pw)
             loss_log.append(batch_loss)
 
             if grad_clip is not None:
@@ -438,6 +445,12 @@ def main_function(experiment_directory, data_source, continue_from, batch_split)
             del warped_xyz_list, pred_sdf_list, sdf_loss, pw_loss, \
                 lp_loss, batch_loss_sdf, batch_loss_reg, batch_loss_pp, batch_loss_pw, batch_loss, chunk_loss
 
+        epoch_info = "epoch {}, total_loss = {:.6f}, sdf_loss = {:.6f}, pw_loss = {:.6f}".format(
+            epoch,
+            sum(epoch_loss) / len(epoch_loss),
+            sum(epoch_sdf_loss) / len(epoch_sdf_loss),
+            sum(epoch_pw_loss) / len(epoch_pw_loss))
+        print(epoch_info)
         end = time.time()
 
         seconds_elapsed = end - start
@@ -507,11 +520,14 @@ if __name__ == "__main__":
         + "subbatches. This allows for training with large effective batch "
         + "sizes in memory constrained environments.",
     )
+    sys.argv = [r"train_ndf.py",
+                "--experiment", r"examples\mini",
+                "--data", r"\\SEUVCL-DATA-03\Data03Training\0518_4dsdf_yxh\data_2"
+                ]
+    args = arg_parser.parse_args()
 
     deep_sdf.add_common_args(arg_parser)
 
-    args = arg_parser.parse_args()
-
-    deep_sdf.configure_logging(args)
+    # deep_sdf.configure_logging(args)
 
     main_function(args.experiment_directory, args.data_source, args.continue_from, int(args.batch_split))

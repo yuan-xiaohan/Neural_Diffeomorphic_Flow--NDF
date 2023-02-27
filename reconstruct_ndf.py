@@ -12,6 +12,8 @@ import torch.nn.functional as F
 import numpy as np
 import math
 
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
 import deep_sdf
 import deep_sdf.workspace as ws
 
@@ -61,9 +63,11 @@ def reconstruct(
 
     for e in range(num_iterations):
         decoder.eval()
-        sdf_data = deep_sdf.data.unpack_sdf_samples_from_ram(
-            test_sdf, num_samples
-        ).cuda()
+        # sdf_data = deep_sdf.data.unpack_sdf_samples_from_ram(
+        #     test_sdf, num_samples
+        # ).cuda()
+        sdf_data, _ = deep_sdf.data.get_sdf_samples_test(test_sdf, num_samples)
+        sdf_data = sdf_data.cuda()
         xyz = sdf_data[:, 0:3]
         sdf_gt = sdf_data[:, 3].unsqueeze(1)
 
@@ -90,6 +94,8 @@ def reconstruct(
             loss += 1e-4 * torch.mean(latent.pow(2))
         loss.backward()
         optimizer.step()
+        sdf_error = loss.item()
+        print("epoch {}, sdf_loss = {:.9e}".format(e, sdf_error))
 
         if e % 100 == 0:
             logging.debug(e)
@@ -101,7 +107,7 @@ def reconstruct(
 
 
 if __name__ == "__main__":
-
+    import sys
     arg_parser = argparse.ArgumentParser(
         description="Use a trained DeepSDF decoder to reconstruct a shape given SDF "
         + "samples."
@@ -140,7 +146,7 @@ if __name__ == "__main__":
         "--iters",
         dest="iterations",
         type=int,
-        default=800,
+        default=500,
         help="The number of iterations of latent code optimization to perform.",
     )
     arg_parser.add_argument(
@@ -159,7 +165,7 @@ if __name__ == "__main__":
         "--resolution",
         dest="resolution",
         type=int,
-        default=256,
+        default=128,
         help="Marching cube resolution.",
     )
 
@@ -178,6 +184,11 @@ if __name__ == "__main__":
         help='Don\'t use octree to accelerate inference. Octree is recommend for most object categories '
              'except those with thin structures like planes'
     )
+    sys.argv = [r"reconstruct_ndf.py",
+                "--experiment", r"examples/all",
+                "--split", "examples/all/test.json",
+                "--data", r"\\SEUVCL-DATA-03\Data03Training\0518_4dsdf_yxh\data_2"
+                ]
 
     deep_sdf.add_common_args(arg_parser)
 
@@ -228,10 +239,36 @@ if __name__ == "__main__":
     with open(args.split_filename, "r") as f:
         split = json.load(f)
 
-    npz_filenames = deep_sdf.data.get_instance_filenames(args.data_source, split)
+    # npz_filenames = deep_sdf.data.get_instance_filenames(args.data_source, split)
+    npz_filenames = []
+    normalizationfiles = []
+    normalized = True
+    for dataset in split:
+        for class_name in split[dataset]:
+            for instance_name in split[dataset][class_name]:
+                instance_filename = os.path.join(
+                    dataset, "Processed", class_name, instance_name + ".npz"
+                )
+                if normalized:
+                    normalization_params_filename = os.path.join(
+                        dataset, "NormalizationParameters", class_name, instance_name + ".npz"
+                    )
+                    normalizationfiles += [normalization_params_filename]
+                if not os.path.isfile(
+                        os.path.join(args.data_source, instance_filename)
+                ):
+                    # raise RuntimeError(
+                    #     'Requested non-existent file "' + instance_filename + "'"
+                    # )
+                    logging.warning(
+                        "Requested non-existent file '{}'".format(instance_filename)
+                    )
+                npz_filenames += [instance_filename]
+
 
     # random.shuffle(npz_filenames)
     npz_filenames = sorted(npz_filenames)
+    normalizationfiles = sorted(normalizationfiles)
 
     logging.debug(decoder)
 
@@ -241,7 +278,7 @@ if __name__ == "__main__":
     rerun = 0
 
     reconstruction_dir = os.path.join(
-        args.experiment_directory, ws.reconstructions_subdir, str(saved_model_epoch)
+        args.experiment_directory, "test_results", str(saved_model_epoch)
     )
 
     if not os.path.isdir(reconstruction_dir):
@@ -275,11 +312,15 @@ if __name__ == "__main__":
         if "npz" not in npz:
             continue
 
-        full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
+        pcd_filename = os.path.join(args.data_source, npz)  # \data\pcd\synthetic\test\xxx.obj
+        norm_filename = os.path.join(args.data_source, normalizationfiles[ii])
+        normalization_params = np.load(norm_filename)
+        # full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
 
         logging.debug("loading {}".format(npz))
 
-        data_sdf = deep_sdf.data.read_sdf_samples_into_ram(full_filename)
+        # data_sdf = deep_sdf.data.read_sdf_samples_into_ram(full_filename)
+
 
         for k in range(repeat):
 
@@ -305,16 +346,13 @@ if __name__ == "__main__":
 
             logging.info("reconstructing {}".format(npz))
 
-            data_sdf[0] = data_sdf[0][torch.randperm(data_sdf[0].shape[0])]
-            data_sdf[1] = data_sdf[1][torch.randperm(data_sdf[1].shape[0])]
-
             start = time.time()
             if not os.path.isfile(latent_filename):
                 err, latent = reconstruct(
                     decoder,
                     int(args.iterations),
                     latent_size,
-                    data_sdf,
+                    pcd_filename,
                     0.01,  # [emp_mean,emp_var],
                     0.1,
                     num_samples=8000,
@@ -343,11 +381,13 @@ if __name__ == "__main__":
                     if args.use_octree:
                         deep_sdf.mesh.create_mesh_octree(
                             decoder, latent, mesh_filename, N=args.resolution, max_batch=int(2 ** 17),
-                            clamp_func=clamping_function, 
+                            clamp_func=clamping_function,
                         )
                     else:
                         deep_sdf.mesh.create_mesh(
                             decoder, latent, mesh_filename, N=args.resolution, max_batch=int(2 ** 17),
+                            offset=normalization_params["offset"], scale=normalization_params["scale"],
+                            Ti=normalization_params["Ti"]
                         )
                 logging.debug("total time: {}".format(time.time() - start))
 

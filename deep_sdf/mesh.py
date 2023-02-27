@@ -12,7 +12,7 @@ import deep_sdf.utils
 
 
 def create_mesh(
-    decoder, latent_vec, filename, N=256, max_batch=(32 ** 3 * 4), offset=None, scale=None, volume_size=2.0
+    decoder, latent_vec, filename, N=256, max_batch=(32 ** 3 * 4), offset=None, scale=None, Ti=None, volume_size=2.0
 ):
     start = time.time()
     ply_filename = filename
@@ -66,6 +66,7 @@ def create_mesh(
         ply_filename + ".ply",
         offset,
         scale,
+        Ti
     )
 
 
@@ -231,6 +232,7 @@ def convert_sdf_samples_to_ply(
     ply_filename_out,
     offset=None,
     scale=None,
+    Ti=None
 ):
     """
     Convert sdf samples to .ply
@@ -267,6 +269,9 @@ def convert_sdf_samples_to_ply(
         mesh_points = mesh_points / scale
     if offset is not None:
         mesh_points = mesh_points - offset
+    if Ti is not None:
+        homogeneous = np.column_stack((mesh_points, np.ones([mesh_points.shape[0], 1])))
+        mesh_points = np.dot(Ti, homogeneous.transpose())[0:3, :].transpose()
 
     # try writing to the ply file
 
